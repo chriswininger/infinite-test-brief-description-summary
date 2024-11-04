@@ -1,107 +1,13 @@
-import psycopg2
-from configparser import ConfigParser
-import requests
 import time
-import csv
+from utils import *
+from sql_queries import *
 
-# SELECT AVG(LENGTH(description)) AS average_description_length
-# FROM events;
-#
-# -- average length is 974
-#
-# SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY LENGTH(description)) AS median_description_length
-# FROM events;
-#
-# -- median 611
-#
-# Some "Normal" descriptions:
-#
-# SELECT * FROM events
-# WHERE length(description) >= 600 AND length(description)<= 700 AND brief_description is NOT NULL LIMIT 20;
-#
-# A couple of outliers:
-#
-# SELECT * FROM events
-# WHERE length(description) > 10000 AND brief_description is not null;
-#
+DELAY_BETWEEN_EVENT_QUERIES_SECONDS = 2
+DELAY_BETWEEN_QUERIES_WITHIN_EVENT_SECONDS = 1
+NUM_SAMPLES_PER_EVENT = 5  # ask for same event n times
 
 
-GET_SOME_MEDIAN_DESCRIPTION_INPUTS = '''
-SELECT id, title, description, brief_description FROM events
-WHERE length(description) >= 600 AND
-  length(description)<= 700 AND
-  brief_description is NOT NULL
-  AND length(trim(brief_description)) > 0
-  LIMIT 30
-'''
-
-# there are 2 like this right now
-GET_SOME_EXTREME_LARGE_DESCRIPTION_INPUTS = """
-SELECT id, title, description, brief_description FROM events
-WHERE length(description) > 10000
-AND brief_description is not null
-AND length(trim(brief_description)) > 0;
-"""
-
-EVENT_ID_COL = 0
-EVENT_TITLE_COL = 1
-EVENT_TITLE_DESC = 2
-EVENT_TITLE_BRIEF_DESC = 3
-
-
-def load_config(filename='database.ini', section='postgresql'):
-  parser = ConfigParser()
-  parser.read(filename)
-
-  # get section, default to postgresql
-  config = {}
-  if parser.has_section(section):
-    params = parser.items(section)
-    for param in params:
-      config[param[0]] = param[1]
-  else:
-    raise Exception('Section {0} not found in the {1} file'.format(section, filename))
-
-  return config
-
-
-def connect(config):
-  """ Connect to the PostgreSQL database server """
-  try:
-    # connecting to the PostgreSQL server
-    with psycopg2.connect(**config) as conn:
-      print('Connected to the PostgreSQL server.')
-      return conn
-  except (psycopg2.DatabaseError, Exception) as error:
-    print(error)
-    return None
-
-
-def ask_service_for_summary(full_description):
-  body = {'description': full_description}
-  response = requests.post('http://localhost:3003/v1/summarization/get-brief-description', json=body)
-
-  if response.status_code >= 200 and response.status_code < 300:
-    return response.json()
-  else:
-    print(f"Request failed with status code: {response.status_code}")
-    return None
-
-def save_output(file_name, data):
-  field_names = data[0].keys()
-
-  with open(file_name, 'w', newline='') as csvfile:
-    writer = csv.DictWriter(csvfile, fieldnames=field_names)
-
-    # Write the header
-    writer.writeheader()
-
-    # Write the data
-    for row in data:
-      writer.writerow(row)
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
+def main():
   config = load_config()
   conn = connect(config)
 
@@ -125,25 +31,49 @@ if __name__ == '__main__':
     print("event title", event[EVENT_TITLE_COL])
     print("")
 
-    prompt_response = ask_service_for_summary(event[EVENT_TITLE_DESC])
+    result = generate_sample(event)
 
-    if prompt_response is not None:
-      predicted_brief_description = prompt_response['summary']
+    if result is not None:
+      prettyPrintResult(result)
+      results.append(result)
 
-      results.append({
-        'human': event[EVENT_TITLE_BRIEF_DESC],
-        'predicted': predicted_brief_description,
-        'full': event[EVENT_TITLE_DESC],
-        'id': event[EVENT_ID_COL]
-      })
-
-      print('human: ', event[EVENT_TITLE_BRIEF_DESC])
-      print('predicted: ',  predicted_brief_description)
-
-      time.sleep(5)
+    time.sleep(DELAY_BETWEEN_EVENT_QUERIES_SECONDS)
 
   print('done prediction: ', results)
   cur.close()
   conn.close()
 
+  save_html_output('my_output.html', results)
   save_output('my_output.csv', results)
+
+
+def generate_sample(event):
+  result = {
+    'title': event[EVENT_TITLE_COL],
+    'human': event[EVENT_TITLE_BRIEF_DESC],
+    'full': event[EVENT_TITLE_DESC],
+    'id': event[EVENT_ID_COL]
+  }
+
+  for i in range(0, NUM_SAMPLES_PER_EVENT):
+    prompt_response = ask_service_for_summary(event[EVENT_TITLE_DESC])
+
+    if prompt_response is not None:
+      predicted_brief_description = prompt_response['summary']
+      result['predicted_' + str(i)] = predicted_brief_description
+
+    time.sleep(DELAY_BETWEEN_QUERIES_WITHIN_EVENT_SECONDS)
+
+  return result
+
+
+def prettyPrintResult(result):
+  print('human: ', result['human'])
+
+  for i in range(0, NUM_SAMPLES_PER_EVENT):
+    print('predicted: ', result['predicted_' + str(i)])
+
+
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+  main()

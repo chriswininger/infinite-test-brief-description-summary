@@ -1,0 +1,6 @@
+[postgresql]
+host=localhost
+port=5436
+database=infinite-api
+user=postgres
+password=xxx
