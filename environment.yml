@@ -1,0 +1,20 @@
+name: output_test
+channels:
+  - defaults
+  - anaconda
+dependencies:
+  - python=3.11.9
+  - pandas
+  - numpy
+  - faiss
+  - pip
+  - pip:
+    - sentence-transformers
+    - json5
+    - psycopg2
+
+# conda env create -f environment.yml
+# conda activate text_similarity
+# conda deactivate
+  
+
